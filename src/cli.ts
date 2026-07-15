@@ -1,9 +1,14 @@
-import { realpathSync } from "node:fs";
+import { realpathSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { EXIT, emit, emitError } from "./output.js";
 import { collectRoutes, runRoutes } from "./commands/routes.js";
+import { runReactant } from "./commands/reactant.js";
+import { runDocs } from "./commands/docs.js";
+import { runCheck } from "./commands/check.js";
 
-const DESCRIPTION = "Inspect the SvelteKit project in the current directory.";
+const DESCRIPTION =
+  "Inspect a SvelteKit project and fetch official Svelte docs, for agents driving the shell.";
 
 interface Command {
   name: string;
@@ -13,6 +18,9 @@ interface Command {
 
 const COMMANDS: Command[] = [
   { name: "routes", summary: "List the SvelteKit routes in the project", run: runRoutes },
+  { name: "reactant", summary: "Map components: props and change types (runes, stores, legacy)", run: runReactant },
+  { name: "check", summary: "Flag outdated Svelte patterns with the modern fix for each", run: runCheck },
+  { name: "docs", summary: "List and fetch official Svelte/SvelteKit docs sections", run: runDocs },
 ];
 
 /** Absolute path of the current executable, home collapsed to `~` (AXI §10). */
@@ -29,13 +37,28 @@ function binPath(): string {
   return resolved.startsWith(home) ? "~" + resolved.slice(home.length) : resolved;
 }
 
+/** Svelte/Kit versions from the project's package.json — cheap aggregate (AXI §4). */
+function projectVersions(cwd: string): string | undefined {
+  try {
+    const pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8"));
+    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+    const parts: string[] = [];
+    if (deps.svelte) parts.push(`svelte ${deps.svelte}`);
+    if (deps["@sveltejs/kit"]) parts.push(`kit ${deps["@sveltejs/kit"]}`);
+    return parts.length > 0 ? parts.join(", ") : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * No-args home view: identify the tool, then show live content the agent can
  * act on immediately (AXI §8, §10). Falls back to guidance when the current
  * directory is not a SvelteKit project.
  */
 async function home(): Promise<number> {
-  const result = await collectRoutes(process.cwd());
+  const cwd = process.cwd();
+  const result = await collectRoutes(cwd);
 
   if (!result) {
     emit({
@@ -44,6 +67,7 @@ async function home(): Promise<number> {
       routes: "no SvelteKit project detected in the current directory",
       help: [
         "cd into a SvelteKit project root, or run `sv-axi routes --cwd <path>`",
+        "Run `sv-axi docs` to browse official Svelte/SvelteKit docs",
         "Run `sv-axi --help` to see all commands",
       ],
     });
@@ -54,15 +78,19 @@ async function home(): Promise<number> {
   const payload: Record<string, unknown> = {
     bin: binPath(),
     description: DESCRIPTION,
-    count: `${shown.length} of ${result.rows.length} total`,
-    routes:
-      shown.length > 0 ? shown : "0 route files found under src/routes",
   };
+  const versions = projectVersions(cwd);
+  if (versions) payload.versions = versions;
+  payload.count = `${shown.length} of ${result.rows.length} total`;
+  payload.routes = shown.length > 0 ? shown : "0 route files found under src/routes";
+
   const help: string[] = [];
   if (result.rows.length > shown.length) {
     help.push(`Run \`sv-axi routes --limit ${result.rows.length}\` to list all routes`);
   }
-  help.push("Run `sv-axi routes --cwd <path>` to inspect another project");
+  help.push("Run `sv-axi reactant` to map components and their change types");
+  help.push("Run `sv-axi check` to flag outdated Svelte patterns");
+  help.push("Run `sv-axi docs <slug>` for official docs, e.g. `sv-axi docs kit/load`");
   payload.help = help;
   emit(payload);
   return EXIT.OK;

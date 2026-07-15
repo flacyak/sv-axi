@@ -1,60 +1,68 @@
 <h1 align="center">sv-axi</h1>
-
 <p align="center">
-  An <a href="https://toonformat.dev/">AXI</a>-compliant CLI for inspecting SvelteKit
-  projects — built for coding agents to drive over the shell.
+  A CLI for inspecting SvelteKit projects and fetching official Svelte docs —
+  built for coding agents to drive over the shell.
 </p>
 
 ---
 
-`sv-axi` follows the **Agent eXperience Interface (AXI)** standards: token-efficient
-[TOON](https://toonformat.dev/) output, minimal default schemas, structured errors,
-predictable exit codes, and a content-first home view. Running it with no arguments
-shows the current project's routes so an agent can act immediately.
+`sv-axi` gives agents a token-efficient view of SvelteKit projects and official docs over shell
 
-> **Status:** skeleton. The AXI-compliant plumbing (arg parsing, TOON output boundary,
-> structured errors, exit codes, help) and one example command (`routes`) are in place.
-> Add commands under `src/commands/` and register them in `src/cli.ts`.
+- [AXI](https://axi.md/) interface.
+- [TOON](https://toonformat.dev/) output, structured errors, predictable exit codes
 
-## Install
+## Quick Start
+
+```sh
+npx skills add flacyak/sv-axi --skill sv
+```
+
+## Local Install
 
 ```sh
 npm install
-npm run build      # compiles src/ → dist/
-```
-
-For local use on your PATH:
-
-```sh
-npm link           # exposes the `sv-axi` binary
+npm run build      # compile dist
+npm link           # add local to PATH
 ```
 
 ## Usage
 
 ```sh
-sv-axi                       # home view: bin, description, and this project's routes
-sv-axi routes                # list SvelteKit routes in the current directory
-sv-axi routes --cwd ../app   # inspect a different project root
-sv-axi routes --limit 500    # raise the list cap (default 200)
-sv-axi --help                # top-level command reference
-sv-axi routes --help         # per-command reference
+sv-axi                       # home view: bin, svelte/kit versions, project routes
+sv-axi routes                # list routes in the current directory
+sv-axi reactant              # map components: props + change types (runes, stores, legacy)
+sv-axi check [files...]      # flag outdated Svelte patterns, with the modern fix for each
+sv-axi docs                  # list official docs sections (offline index)
+sv-axi docs kit/load         # fetch one section live from svelte.dev (--full for all of it)
 ```
 
-Example output (TOON):
+Example output:
 
 ```
-count: 7 of 7 total
-routes[7]{route,kind,file}:
-  /,page,+page.svelte
-  /,layout,+layout.svelte
-  /api/posts,endpoint,+server.ts
-  "/blog/[slug]",page,+page.svelte
-  ...
+$ sv-axi reactant
+count: 4 of 4 total
+components[4]{file,props,reacts}:
+  src/lib/Counter.svelte,count+step,props+derived+effect+context
+  src/routes/+layout.svelte,children,props
+  src/routes/+page.svelte,data,props+state+derived
+  "src/routes/blog/[slug]/+page.svelte",post,props+legacy
+help[1]: Run `sv-axi check <file>` to flag outdated patterns in a component
+
+$ sv-axi check
+count: 2 of 2 total
+issues[2]{file,line,rule,fix}:
+  "src/routes/blog/[slug]/+page.svelte",2,export-let,"declare props with `let { … } = $props()`"
+  "src/routes/blog/[slug]/+page.svelte",7,on-directive,"use event attributes: `onclick={…}` instead of `on:click`"
 ```
+
+`check` always exits 0 — findings are data, not failures; agents re-run it
+until it reports `0 issues`. The docs section index is generated at build time
+(`npm run gen:docs`) so listing costs no network call; fetching a section pulls
+the live `llms.txt` from svelte.dev, truncated to 2000 chars unless `--full`.
 
 ### Conventions (AXI)
 
-- **stdout** carries all structured output the agent reads — data *and* errors, as TOON.
+- **stdout** carries all structured output the agent reads — data _and_ errors, as TOON.
 - **stderr** carries diagnostics only (`debug()` in `src/output.ts`).
 - **Exit codes:** `0` success (incl. no-ops), `1` runtime error, `2` usage error.
 - Unknown flags and commands fail loud with the valid set inlined, never silently dropped.
@@ -67,8 +75,14 @@ src/
   cli.ts              command registry, dispatch, home view, top-level help
   flags.ts            flag parser with unknown-flag rejection
   output.ts           TOON output boundary, structured errors, exit codes
+  docs-index.ts       generated docs section index (npm run gen:docs)
   commands/
-    routes.ts         example command: scan src/routes and list routes
+    routes.ts         scan src/routes and list routes
+    reactant.ts       map components to their props and change types
+    check.ts          static checks for outdated Svelte patterns
+    docs.ts           list sections offline, fetch one live from svelte.dev
+scripts/
+  gen-docs-index.mjs  regenerate src/docs-index.ts from svelte.dev/content.json
 ```
 
 To add a command: create `src/commands/<name>.ts` exporting a `run(args): Promise<number>`,
@@ -85,6 +99,7 @@ only one). Both are TODO for this skeleton:
    ambient context. Wire this up behind an explicit `sv-axi setup` command.
 2. **Installable skill (secondary)** — ship a `SKILL.md` generated from the home view so
    any skill-aware agent can load `sv-axi` on demand:
+
    ```sh
    npx skills add <owner>/sv-axi --skill sv-axi
    ```

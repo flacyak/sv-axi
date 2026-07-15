@@ -16,6 +16,7 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
+    "gen:docs": "node scripts/gen-docs-index.mjs",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
