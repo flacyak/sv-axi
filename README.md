@@ -34,6 +34,8 @@ sv-axi reactant              # map components: props + change types (runes, stor
 sv-axi check [files...]      # flag outdated Svelte patterns, with the modern fix for each
 sv-axi docs                  # list official docs sections (offline index)
 sv-axi docs kit/load         # fetch one section live from svelte.dev (--full for all of it)
+sv-axi setup                 # register session-start hooks (Claude Code, Codex, OpenCode)
+sv-axi --session             # hook variant of the home view: trimmed, silent outside SvelteKit
 ```
 
 Example output:
@@ -81,6 +83,7 @@ src/
     reactant.ts       map components to their props and change types
     check.ts          static checks for outdated Svelte patterns
     docs.ts           list sections offline, fetch one live from svelte.dev
+    setup.ts          register session-start hooks/plugins (claude, codex, opencode)
 scripts/
   gen-docs-index.mjs  regenerate src/docs-index.ts from svelte.dev/content.json
 ```
@@ -91,14 +94,27 @@ fields), include a total count on lists, and emit errors via `emitError()`.
 
 ## Agent integration
 
-There are 2 ways to get `sv-axi` in front of an agent
-Both are TODO:
+There are 2 ways to get `sv-axi` in front of an agent:
 
-1. **Session hook (primary)** — register a `SessionStart` hook (Claude Code / Codex) or a
-   plugin (OpenCode) that runs `sv-axi` so every session starts with the route list as
-   ambient context. Wire this up behind an explicit `sv-axi setup` command.
-2. **Installable skill (secondary)** — ship a `SKILL.md` generated from the home view so
-   any skill-aware agent can load `sv-axi` on demand:
+1. **Session hook (primary)** — run `sv-axi setup` in a project to register a
+   `SessionStart` hook (Claude Code, Codex) and a managed plugin (OpenCode) that run
+   `sv-axi --session`, so every session starts with the route list as ambient context.
+
+   ```sh
+   sv-axi setup                 # project scope, every app whose config dir exists
+   sv-axi setup --app claude    # one app, installed even when not auto-detected
+   sv-axi setup --scope user    # user-level config instead of the project's
+   ```
+
+   The hook command uses the bare `sv-axi` name when it resolves on PATH to the current
+   executable, and the absolute path otherwise. Re-running `setup` is a silent no-op when
+   nothing changed and repairs the path when the executable moved. For Codex it also
+   enables `[features].hooks = true` in `~/.codex/config.toml`. `sv-axi --session` caps
+   output harder than the home view and prints nothing outside SvelteKit projects, so
+   user-scoped hooks cost zero tokens elsewhere.
+
+2. **Installable skill (secondary, TODO)** — ship a `SKILL.md` generated from the home
+   view so any skill-aware agent can load `sv-axi` on demand:
 
    ```sh
    npx skills add <owner>/sv-axi --skill sv-axi

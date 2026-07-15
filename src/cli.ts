@@ -6,6 +6,7 @@ import { collectRoutes, runRoutes } from "./commands/routes.js";
 import { runReactant } from "./commands/reactant.js";
 import { runDocs } from "./commands/docs.js";
 import { runCheck } from "./commands/check.js";
+import { runSetup } from "./commands/setup.js";
 
 const DESCRIPTION =
   "Inspect a SvelteKit project and fetch official Svelte docs, for agents driving the shell.";
@@ -21,6 +22,7 @@ const COMMANDS: Command[] = [
   { name: "reactant", summary: "Map components: props and change types (runes, stores, legacy)", run: runReactant },
   { name: "check", summary: "Flag outdated Svelte patterns with the modern fix for each", run: runCheck },
   { name: "docs", summary: "List and fetch official Svelte/SvelteKit docs sections", run: runDocs },
+  { name: "setup", summary: "Register session-start hooks (Claude Code, Codex, OpenCode)", run: runSetup },
 ];
 
 /** Absolute path of the current executable, home collapsed to `~` (AXI §10). */
@@ -55,12 +57,17 @@ function projectVersions(cwd: string): string | undefined {
  * No-args home view: identify the tool, then show live content the agent can
  * act on immediately (AXI §8, §10). Falls back to guidance when the current
  * directory is not a SvelteKit project.
+ *
+ * `session` is the variant run by the hooks `sv-axi setup` installs: it loads
+ * on every agent session, so it caps routes harder and prints nothing at all
+ * outside SvelteKit projects (AXI §7 directory-scoped, token-budget-aware).
  */
-async function home(): Promise<number> {
+async function home(session = false): Promise<number> {
   const cwd = process.cwd();
   const result = await collectRoutes(cwd);
 
   if (!result) {
+    if (session) return EXIT.OK;
     emit({
       bin: binPath(),
       description: DESCRIPTION,
@@ -74,7 +81,7 @@ async function home(): Promise<number> {
     return EXIT.OK;
   }
 
-  const shown = result.rows.slice(0, 200);
+  const shown = result.rows.slice(0, session ? 30 : 200);
   const payload: Record<string, unknown> = {
     bin: binPath(),
     description: DESCRIPTION,
@@ -88,9 +95,13 @@ async function home(): Promise<number> {
   if (result.rows.length > shown.length) {
     help.push(`Run \`sv-axi routes --limit ${result.rows.length}\` to list all routes`);
   }
-  help.push("Run `sv-axi reactant` to map components and their change types");
-  help.push("Run `sv-axi check` to flag outdated Svelte patterns");
-  help.push("Run `sv-axi docs <slug>` for official docs, e.g. `sv-axi docs kit/load`");
+  if (session) {
+    help.push("Run `sv-axi --help` for all commands (reactant, check, docs)");
+  } else {
+    help.push("Run `sv-axi reactant` to map components and their change types");
+    help.push("Run `sv-axi check` to flag outdated Svelte patterns");
+    help.push("Run `sv-axi docs <slug>` for official docs, e.g. `sv-axi docs kit/load`");
+  }
   payload.help = help;
   emit(payload);
   return EXIT.OK;
@@ -108,6 +119,7 @@ function topHelp(): number {
     ...COMMANDS.map((c) => `  ${c.name.padEnd(10)} ${c.summary}`),
     "",
     "Run with no command to see the current project's routes.",
+    "Run with --session for the hook variant: trimmed output, silent outside SvelteKit projects.",
     "Run `sv-axi <command> --help` for command details.",
   ];
   emit({ help: lines.join("\n") });
@@ -119,6 +131,7 @@ export async function run(argv: string[]): Promise<number> {
 
   if (first === undefined) return home();
   if (first === "--help" || first === "-h") return topHelp();
+  if (first === "--session") return home(true);
 
   const command = COMMANDS.find((c) => c.name === first);
   if (command) return command.run(argv.slice(1));
