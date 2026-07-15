@@ -91,8 +91,8 @@ fields), include a total count on lists, and emit errors via `emitError()`.
 
 ## Agent integration
 
-AXI recommends two complementary ways to put `sv-axi` in front of an agent (a user needs
-only one). Both are TODO for this skeleton:
+There are 2 ways to get `sv-axi` in front of an agent
+Both are TODO:
 
 1. **Session hook (primary)** — register a `SessionStart` hook (Claude Code / Codex) or a
    plugin (OpenCode) that runs `sv-axi` so every session starts with the route list as
