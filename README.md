@@ -6,10 +6,10 @@
 
 ---
 
-`sv-axi` gives agents a token-efficient view of SvelteKit projects and official docs over shell
+A token-efficient view of SvelteKit projects over shell
 
 - [AXI](https://axi.md/) interface.
-- [TOON](https://toonformat.dev/) output, structured errors, predictable exit codes
+- [TOON](https://toonformat.dev/) structured output, predictable exit codes
 
 ## Quick Start
 
@@ -58,69 +58,7 @@ issues[2]{file,line,rule,fix}:
   "src/routes/blog/[slug]/+page.svelte",7,on-directive,"use event attributes: `onclick={…}` instead of `on:click`"
 ```
 
-`check` always exits 0 — findings are data, not failures; agents re-run it
-until it reports `0 issues`. The docs section index is generated at build time
-(`npm run gen:docs`) so listing costs no network call; fetching a section pulls
-the live `llms.txt` from svelte.dev, truncated to 2000 chars unless `--full`.
-
-### Finding the project
-
-Agents run commands from wherever the conversation left them, so `routes`,
-`reactant`, `check`, and the home view all discover the project rather than
-assuming it is the current directory:
-
-1. **Up** from the starting directory (stopping at the `.git` boundary) for a
-   `svelte.config.*` or a package.json depending on Svelte — this covers being
-   deep inside `src/lib`.
-2. **Down** from the repo root when nothing is above — this covers monorepos
-   where the app lives in `apps/web`.
-
-Output carries a `root` field whenever the project is not the current
-directory, and suggested follow-up commands carry the matching `--cwd`.
-Several projects under one root is an ambiguity, not a guess: the home view
-lists them, subcommands exit `2` with the list and a ready `--cwd` command.
-
-`--cwd` sets where the search *starts*, not the project root itself, so
-`sv-axi check --cwd apps/web` works from anywhere.
-
-The routes and lib directories come from `kit.files` in `svelte.config.*` when
-it sets them. The config is read as text — no module resolution, and the repo's
-code is not executed — and only imported when a path is computed rather than
-written out. If neither resolves, the defaults apply and the empty result says
-so instead of reporting "0 routes" as fact.
-
-### Conventions (AXI)
-
-- **stdout** carries all structured output the agent reads — data _and_ errors, as TOON.
-- **stderr** carries diagnostics only (`debug()` in `src/output.ts`).
-- **Exit codes:** `0` success (incl. no-ops), `1` runtime error, `2` usage error.
-- Unknown flags and commands fail loud with the valid set inlined, never silently dropped.
-
-## Project layout
-
-```
-src/
-  index.ts            entry (shebang) — turns run() into a process exit code
-  cli.ts              command registry, dispatch, home view, top-level help
-  flags.ts            flag parser with unknown-flag rejection
-  output.ts           TOON output boundary, structured errors, exit codes
-  project.ts          project discovery (up, then down) + svelte.config kit.files
-  docs-index.ts       generated docs section index (npm run gen:docs)
-  commands/
-    routes.ts         scan the project's routes dir and list routes
-    reactant.ts       map components to their props and change types
-    check.ts          static checks for outdated Svelte patterns
-    docs.ts           list sections offline, fetch one live from svelte.dev
-    setup.ts          register session-start hooks/plugins (claude, codex, opencode)
-scripts/
-  gen-docs-index.mjs  regenerate src/docs-index.ts from svelte.dev/content.json
-```
-
-To add a command: create `src/commands/<name>.ts` exporting a `run(args): Promise<number>`,
-then add it to the `COMMANDS` array in `src/cli.ts`. Keep default schemas small (3–4
-fields), include a total count on lists, and emit errors via `emitError()`.
-
-## Agent integration
+## Interaction
 
 There are 2 ways to get `sv-axi` in front of an agent:
 
@@ -132,16 +70,13 @@ There are 2 ways to get `sv-axi` in front of an agent:
    sv-axi setup                 # project scope, every app whose config dir exists
    sv-axi setup --app claude    # one app, installed even when not auto-detected
    sv-axi setup --scope user    # user-level config instead of the project's
+   sv-axi --session             # cap output to SV projects
    ```
 
-   The hook command uses the bare `sv-axi` name when it resolves on PATH to the current
-   executable, and the absolute path otherwise. Re-running `setup` is a silent no-op when
-   nothing changed and repairs the path when the executable moved. For Codex it also
-   enables `[features].hooks = true` in `~/.codex/config.toml`. `sv-axi --session` caps
-   output harder than the home view and prints nothing outside SvelteKit projects, so
-   user-scoped hooks cost zero tokens elsewhere.
+   `sv-axi` on PATH, else absolute path needed.
+   **Codex**: sets `[features].hooks = true` in `~/.codex/config.toml`.
 
-2. **Installable skill (secondary, TODO)** — ship a `SKILL.md` generated from the home
+2. **Installable skill (TODO: 0.0.4)** — ship a `SKILL.md` generated from the home
    view so any skill-aware agent can load `sv-axi` on demand:
 
    ```sh
@@ -150,14 +85,9 @@ There are 2 ways to get `sv-axi` in front of an agent:
 
 See `.agents/skills/axi/SKILL.md` in this repo for the full AXI standard.
 
-## Development
-
-```sh
-npm run dev         # tsc --watch
-npm run typecheck   # tsc --noEmit
-npm run build       # emit dist/
 ```
 
 ## License
 
 MIT
+```
