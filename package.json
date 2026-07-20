@@ -1,6 +1,6 @@
 {
   "name": "sv-axi",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "AXI CLI for inspecting SvelteKit projects, built for agents to drive via shell.",
   "type": "module",
   "main": "./dist/lib.js",
