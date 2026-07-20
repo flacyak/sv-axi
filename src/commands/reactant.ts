@@ -1,8 +1,8 @@
 import { readFile, readdir } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { EXIT, emit, emitError } from "../output.js";
 import { parseFlags, type FlagSpec } from "../flags.js";
+import { discover, displayPath, emitAmbiguous, emitNoProject } from "../project.js";
 
 export const REACTANT_FLAGS: FlagSpec[] = [
   { name: "cwd", takesValue: true },
@@ -11,9 +11,10 @@ export const REACTANT_FLAGS: FlagSpec[] = [
 
 export const REACTANT_HELP = `sv-axi reactant — map the project's components and how they react to change.
 
-Lists every .svelte file under src/ with its declared props and the change
+Lists every .svelte file in the project with its declared props and the change
 types it uses (runes, stores, legacy reactivity), so an agent can pick the
-right component to edit without opening each file.
+right component to edit without opening each file. The project root is found
+by searching up from the starting directory, then down through the repo.
 
 Change types: props, state, derived, effect, bindable, store, context, legacy
 ("legacy" = pre-runes patterns: export let, $:, createEventDispatcher).
@@ -22,13 +23,13 @@ Usage:
   sv-axi reactant [--cwd <path>] [--limit <n>]
 
 Flags:
-  --cwd <path>    project root to scan (default: current directory)
+  --cwd <path>    directory to start the search from (default: current directory)
   --limit <n>     max components to list (default: 200)
   --help          show this help
 
 Examples:
   sv-axi reactant
-  sv-axi reactant --cwd ../my-app`;
+  sv-axi reactant --cwd apps/web`;
 
 interface ComponentRow {
   file: string;
@@ -97,20 +98,22 @@ export async function runReactant(args: string[]): Promise<number> {
     return emitError(parsed.error, { help: REACTANT_HELP, code: EXIT.USAGE });
   }
 
-  const cwd = (parsed.flags.cwd as string | undefined) ?? process.cwd();
-  const src = join(cwd, "src");
-  if (!existsSync(src)) {
-    return emitError(`no components found (no ${src})`, {
-      help: "run sv-axi from a SvelteKit project root, or pass --cwd <path>",
-      code: EXIT.ERROR,
-    });
+  const start = resolve((parsed.flags.cwd as string | undefined) ?? process.cwd());
+  const found = await discover(start);
+  if (!found.project) {
+    return found.candidates.length > 1
+      ? emitAmbiguous("reactant", found)
+      : emitNoProject("reactant", found);
   }
 
+  const project = found.project;
+  const root = displayPath(project.root);
+
   const files: string[] = [];
-  await walkSvelte(src, files);
+  for (const dir of project.scanDirs) await walkSvelte(dir, files);
 
   if (files.length === 0) {
-    emit({ components: "0 .svelte components found under src" });
+    emit({ root, components: "0 .svelte components found in this project" });
     return EXIT.OK;
   }
 
@@ -118,7 +121,7 @@ export async function runReactant(args: string[]): Promise<number> {
   for (const f of files.sort()) {
     const { props, reacts } = analyzeComponent(await readFile(f, "utf8"));
     rows.push({
-      file: relative(cwd, f).split(sep).join("/"),
+      file: relative(project.root, f).split(sep).join("/"),
       props: props.join("+"),
       reacts: reacts.join("+"),
     });
@@ -127,6 +130,7 @@ export async function runReactant(args: string[]): Promise<number> {
   const limit = Number(parsed.flags.limit) || 200;
   const shown = rows.slice(0, limit);
   const payload: Record<string, unknown> = {
+    root,
     count: `${shown.length} of ${rows.length} total`,
     components: shown,
   };

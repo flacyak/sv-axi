@@ -1,8 +1,15 @@
 import { readdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { EXIT, emit, emitError } from "../output.js";
 import { parseFlags, type FlagSpec } from "../flags.js";
+import {
+  discover,
+  displayPath,
+  emitAmbiguous,
+  emitNoProject,
+  type Project,
+} from "../project.js";
 
 export const ROUTES_FLAGS: FlagSpec[] = [
   { name: "cwd", takesValue: true },
@@ -11,17 +18,22 @@ export const ROUTES_FLAGS: FlagSpec[] = [
 
 export const ROUTES_HELP = `sv-axi routes — list the SvelteKit routes in a project.
 
+The project root is found by searching up from the starting directory, then
+down through the repo — so this works from a nested source directory or from
+a monorepo root. The routes directory honours \`kit.files.routes\` when
+svelte.config.js sets it.
+
 Usage:
   sv-axi routes [--cwd <path>] [--limit <n>]
 
 Flags:
-  --cwd <path>    project root to scan (default: current directory)
+  --cwd <path>    directory to start the search from (default: current directory)
   --limit <n>     max routes to list (default: 200)
   --help          show this help
 
 Examples:
   sv-axi routes
-  sv-axi routes --cwd ../my-app
+  sv-axi routes --cwd apps/web
   sv-axi routes --limit 500`;
 
 export interface RouteRow {
@@ -59,12 +71,12 @@ async function walk(dir: string, out: string[]): Promise<void> {
 }
 
 /**
- * Scan `<cwd>/src/routes` and return every SvelteKit route file.
- * Returns `null` when the directory does not exist so callers can decide
+ * Scan the project's routes directory and return every route file.
+ * Returns `null` when that directory does not exist so callers can decide
  * how to report it (a hard error for the subcommand, a hint for the home view).
  */
-export async function collectRoutes(cwd: string): Promise<RoutesResult | null> {
-  const routesDir = join(cwd, "src", "routes");
+export async function collectRoutes(project: Project): Promise<RoutesResult | null> {
+  const { routesDir } = project;
   if (!existsSync(routesDir)) return null;
 
   const files: string[] = [];
@@ -96,23 +108,37 @@ export async function runRoutes(args: string[]): Promise<number> {
     return emitError(parsed.error, { help: ROUTES_HELP, code: EXIT.USAGE });
   }
 
-  const cwd = (parsed.flags.cwd as string | undefined) ?? process.cwd();
-  const result = await collectRoutes(cwd);
-  if (!result) {
-    return emitError(`no SvelteKit routes found (no ${join(cwd, "src", "routes")})`, {
-      help: "run sv-axi from a SvelteKit project root, or pass --cwd <path>",
-      code: EXIT.ERROR,
-    });
+  const start = resolve((parsed.flags.cwd as string | undefined) ?? process.cwd());
+  const found = await discover(start);
+  if (!found.project) {
+    return found.candidates.length > 1
+      ? emitAmbiguous("routes", found)
+      : emitNoProject("routes", found);
   }
 
-  if (result.rows.length === 0) {
-    emit({ routes: "0 route files found under src/routes" });
+  const project = found.project;
+  const root = displayPath(project.root);
+  const result = await collectRoutes(project);
+  const routesDir = displayPath(project.routesDir);
+
+  if (!result || result.rows.length === 0) {
+    const payload: Record<string, unknown> = {
+      root,
+      routes: `0 route files found under ${routesDir}`,
+    };
+    if (project.configUnresolved) {
+      payload.help = [
+        `\`kit.files\` in ${displayPath(project.configFile!)} could not be resolved — ${routesDir} is the default, not the configured path`,
+      ];
+    }
+    emit(payload);
     return EXIT.OK;
   }
 
   const limit = Number(parsed.flags.limit) || 200;
   const shown = result.rows.slice(0, limit);
   const payload: Record<string, unknown> = {
+    root,
     count: `${shown.length} of ${result.rows.length} total`,
     routes: shown,
   };

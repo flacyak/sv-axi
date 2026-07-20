@@ -1,7 +1,7 @@
-import { realpathSync, readFileSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
 import { EXIT, emit, emitError } from "./output.js";
+import { candidateRows, discover, displayPath } from "./project.js";
 import { collectRoutes, runRoutes } from "./commands/routes.js";
 import { runReactant } from "./commands/reactant.js";
 import { runDocs } from "./commands/docs.js";
@@ -39,41 +39,49 @@ function binPath(): string {
   return resolved.startsWith(home) ? "~" + resolved.slice(home.length) : resolved;
 }
 
-/** Svelte/Kit versions from the project's package.json — cheap aggregate (AXI §4). */
-function projectVersions(cwd: string): string | undefined {
-  try {
-    const pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8"));
-    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-    const parts: string[] = [];
-    if (deps.svelte) parts.push(`svelte ${deps.svelte}`);
-    if (deps["@sveltejs/kit"]) parts.push(`kit ${deps["@sveltejs/kit"]}`);
-    return parts.length > 0 ? parts.join(", ") : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * No-args home view: identify the tool, then show live content the agent can
- * act on immediately (AXI §8, §10). Falls back to guidance when the current
- * directory is not a SvelteKit project.
+ * act on immediately (AXI §8, §10). The project is discovered rather than
+ * assumed to be the current directory, so this works from a nested source
+ * directory or from a monorepo root.
  *
  * `session` is the variant run by the hooks `sv-axi setup` installs: it loads
  * on every agent session, so it caps routes harder and prints nothing at all
  * outside SvelteKit projects (AXI §7 directory-scoped, token-budget-aware).
  */
 async function home(session = false): Promise<number> {
-  const cwd = process.cwd();
-  const result = await collectRoutes(cwd);
+  const found = await discover(process.cwd());
 
-  if (!result) {
+  // Several projects in one repo: list them instead of guessing (AXI §8). Worth
+  // showing in the session hook too — it's the monorepo root an agent starts in,
+  // and a few rows are enough to orient it.
+  if (!found.project && found.candidates.length > 1) {
+    const shown = found.candidates.slice(0, session ? 10 : 50);
+    const help = [
+      `Run \`sv-axi routes --cwd ${displayPath(shown[0].root)}\` to list one project's routes`,
+    ];
+    if (!session) help.push("Run `sv-axi --help` to see all commands");
+    emit({
+      bin: binPath(),
+      description: DESCRIPTION,
+      count: `${shown.length} of ${found.candidates.length} SvelteKit projects in ${displayPath(found.searchedFrom)}`,
+      projects: candidateRows(shown),
+      help,
+    });
+    return EXIT.OK;
+  }
+
+  const project = found.project;
+  const result = project ? await collectRoutes(project) : null;
+
+  if (!project || !result) {
     if (session) return EXIT.OK;
     emit({
       bin: binPath(),
       description: DESCRIPTION,
-      routes: "no SvelteKit project detected in the current directory",
+      routes: `no SvelteKit project found in or under ${displayPath(found.searchedFrom)}`,
       help: [
-        "cd into a SvelteKit project root, or run `sv-axi routes --cwd <path>`",
+        "cd into a SvelteKit project, or run `sv-axi routes --cwd <path>`",
         "Run `sv-axi docs` to browse official Svelte/SvelteKit docs",
         "Run `sv-axi --help` to see all commands",
       ],
@@ -86,20 +94,24 @@ async function home(session = false): Promise<number> {
     bin: binPath(),
     description: DESCRIPTION,
   };
-  const versions = projectVersions(cwd);
-  if (versions) payload.versions = versions;
+  const root = displayPath(project.root);
+  if (root !== ".") payload.root = root;
+  if (project.versions) payload.versions = project.versions;
   payload.count = `${shown.length} of ${result.rows.length} total`;
-  payload.routes = shown.length > 0 ? shown : "0 route files found under src/routes";
+  payload.routes =
+    shown.length > 0 ? shown : `0 route files found under ${displayPath(project.routesDir)}`;
 
+  // Carry --cwd into the suggestions when the project isn't the cwd (AXI §9).
+  const scope = root === "." ? "" : ` --cwd ${root}`;
   const help: string[] = [];
   if (result.rows.length > shown.length) {
-    help.push(`Run \`sv-axi routes --limit ${result.rows.length}\` to list all routes`);
+    help.push(`Run \`sv-axi routes${scope} --limit ${result.rows.length}\` to list all routes`);
   }
   if (session) {
     help.push("Run `sv-axi --help` for all commands (reactant, check, docs)");
   } else {
-    help.push("Run `sv-axi reactant` to map components and their change types");
-    help.push("Run `sv-axi check` to flag outdated Svelte patterns");
+    help.push(`Run \`sv-axi reactant${scope}\` to map components and their change types`);
+    help.push(`Run \`sv-axi check${scope}\` to flag outdated Svelte patterns`);
     help.push("Run `sv-axi docs <slug>` for official docs, e.g. `sv-axi docs kit/load`");
   }
   payload.help = help;

@@ -1,8 +1,9 @@
 import { readFile, readdir } from "node:fs/promises";
 import { existsSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { EXIT, emit, emitError } from "../output.js";
 import { parseFlags, type FlagSpec } from "../flags.js";
+import { discover, displayPath, emitAmbiguous, emitNoProject } from "../project.js";
 
 export const CHECK_FLAGS: FlagSpec[] = [
   { name: "cwd", takesValue: true },
@@ -17,15 +18,19 @@ Exit code is 0 even when issues are found — re-run after fixing until clean.
 Usage:
   sv-axi check [files...] [--cwd <path>] [--limit <n>]
 
+With no files, the project is found by searching up from the starting
+directory, then down through the repo, and every .svelte file in it is checked.
+
 Flags:
-  --cwd <path>    project root to scan when no files are given (default: cwd)
+  --cwd <path>    directory to start from; also resolves the file arguments
+                  (default: current directory)
   --limit <n>     max issues to list (default: 200)
   --help          show this help
 
 Examples:
   sv-axi check
   sv-axi check src/lib/Button.svelte
-  sv-axi check --cwd ../my-app`;
+  sv-axi check --cwd apps/web`;
 
 interface Issue {
   file: string;
@@ -95,23 +100,28 @@ export async function runCheck(args: string[]): Promise<number> {
     return emitError(parsed.error, { help: CHECK_HELP, code: EXIT.USAGE });
   }
 
-  const cwd = (parsed.flags.cwd as string | undefined) ?? process.cwd();
+  const start = resolve((parsed.flags.cwd as string | undefined) ?? process.cwd());
   let files = parsed.positionals;
+  let base = start;
+  let root: string | undefined;
 
   if (files.length === 0) {
-    const src = join(cwd, "src");
-    if (!existsSync(src)) {
-      return emitError(`nothing to check (no ${src})`, {
-        help: "pass .svelte files directly, or run from a project root: `sv-axi check src/lib/X.svelte`",
-        code: EXIT.ERROR,
-      });
+    const found = await discover(start);
+    if (!found.project) {
+      return found.candidates.length > 1
+        ? emitAmbiguous("check", found)
+        : emitNoProject("check", found);
     }
+    base = found.project.root;
+    root = displayPath(base);
     files = [];
-    await walkSvelte(src, files);
+    for (const dir of found.project.scanDirs) await walkSvelte(dir, files);
   } else {
+    // Explicit paths are the agent's own, resolved against --cwd when given.
+    files = files.map((f) => resolve(start, f));
     for (const f of files) {
       if (!existsSync(f) || !statSync(f).isFile()) {
-        return emitError(`no such file: ${f}`, {
+        return emitError(`no such file: ${displayPath(f)}`, {
           help: "Run `sv-axi reactant` to list the project's components",
           code: EXIT.ERROR,
         });
@@ -120,16 +130,20 @@ export async function runCheck(args: string[]): Promise<number> {
   }
 
   const issues: Issue[] = [];
-  for (const f of files) issues.push(...(await checkFile(f, cwd)));
+  for (const f of files) issues.push(...(await checkFile(f, base)));
 
   if (issues.length === 0) {
-    emit({ check: `0 issues found in ${files.length} .svelte file${files.length === 1 ? "" : "s"}` });
+    const payload: Record<string, unknown> = {};
+    if (root) payload.root = root;
+    payload.check = `0 issues found in ${files.length} .svelte file${files.length === 1 ? "" : "s"}`;
+    emit(payload);
     return EXIT.OK;
   }
 
   const limit = Number(parsed.flags.limit) || 200;
   const shown = issues.slice(0, limit);
   const payload: Record<string, unknown> = {
+    ...(root ? { root } : {}),
     count: `${shown.length} of ${issues.length} total`,
     issues: shown,
     help: [

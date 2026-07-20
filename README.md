@@ -29,7 +29,8 @@ npm link           # add local to PATH
 
 ```sh
 sv-axi                       # home view: bin, svelte/kit versions, project routes
-sv-axi routes                # list routes in the current directory
+sv-axi routes                # list the project's routes (found from the current directory)
+sv-axi routes --cwd apps/web # start the search somewhere else — e.g. one app in a monorepo
 sv-axi reactant              # map components: props + change types (runes, stores, legacy)
 sv-axi check [files...]      # flag outdated Svelte patterns, with the modern fix for each
 sv-axi docs                  # list official docs sections (offline index)
@@ -62,6 +63,32 @@ until it reports `0 issues`. The docs section index is generated at build time
 (`npm run gen:docs`) so listing costs no network call; fetching a section pulls
 the live `llms.txt` from svelte.dev, truncated to 2000 chars unless `--full`.
 
+### Finding the project
+
+Agents run commands from wherever the conversation left them, so `routes`,
+`reactant`, `check`, and the home view all discover the project rather than
+assuming it is the current directory:
+
+1. **Up** from the starting directory (stopping at the `.git` boundary) for a
+   `svelte.config.*` or a package.json depending on Svelte — this covers being
+   deep inside `src/lib`.
+2. **Down** from the repo root when nothing is above — this covers monorepos
+   where the app lives in `apps/web`.
+
+Output carries a `root` field whenever the project is not the current
+directory, and suggested follow-up commands carry the matching `--cwd`.
+Several projects under one root is an ambiguity, not a guess: the home view
+lists them, subcommands exit `2` with the list and a ready `--cwd` command.
+
+`--cwd` sets where the search *starts*, not the project root itself, so
+`sv-axi check --cwd apps/web` works from anywhere.
+
+The routes and lib directories come from `kit.files` in `svelte.config.*` when
+it sets them. The config is read as text — no module resolution, and the repo's
+code is not executed — and only imported when a path is computed rather than
+written out. If neither resolves, the defaults apply and the empty result says
+so instead of reporting "0 routes" as fact.
+
 ### Conventions (AXI)
 
 - **stdout** carries all structured output the agent reads — data _and_ errors, as TOON.
@@ -77,9 +104,10 @@ src/
   cli.ts              command registry, dispatch, home view, top-level help
   flags.ts            flag parser with unknown-flag rejection
   output.ts           TOON output boundary, structured errors, exit codes
+  project.ts          project discovery (up, then down) + svelte.config kit.files
   docs-index.ts       generated docs section index (npm run gen:docs)
   commands/
-    routes.ts         scan src/routes and list routes
+    routes.ts         scan the project's routes dir and list routes
     reactant.ts       map components to their props and change types
     check.ts          static checks for outdated Svelte patterns
     docs.ts           list sections offline, fetch one live from svelte.dev
