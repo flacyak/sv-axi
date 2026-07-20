@@ -3,6 +3,15 @@
   "version": "0.0.1",
   "description": "AXI CLI for inspecting SvelteKit projects, built for agents to drive via shell.",
   "type": "module",
+  "main": "./dist/lib.js",
+  "types": "./dist/lib.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/lib.d.ts",
+      "default": "./dist/lib.js"
+    },
+    "./package.json": "./package.json"
+  },
   "bin": {
     "sv-axi": "dist/index.js"
   },
