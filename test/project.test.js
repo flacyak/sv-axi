@@ -75,6 +75,43 @@ describe("discover", () => {
     assert.equal(found.project?.routesDir, join(root, "src", "routes"));
   });
 
+  it("resolves a shorthand `kit.files` key by evaluating the config", async () => {
+    const root = kitFixture("proj-shorthand", {
+      "svelte.config.js":
+        "const routes = 'source/pages';\n" +
+        "export default { kit: { files: { routes } } };\n",
+      "source/pages/+page.svelte": "",
+    });
+    const found = await discover(root);
+    assert.equal(found.project?.routesDir, join(root, "source", "pages"));
+    assert.equal(found.project?.configUnresolved, undefined);
+  });
+
+  it("flags a shorthand `kit.files` key it cannot evaluate", async () => {
+    const root = kitFixture("proj-shorthand-unresolved", {
+      "svelte.config.js":
+        "const routes = globalThis.__missing__.routes;\n" +
+        "export default { kit: { files: { routes } } };\n",
+      "src/routes/+page.svelte": "",
+    });
+    const found = await discover(root);
+    assert.equal(found.project?.configUnresolved, true);
+  });
+
+  it("does not mistake a value named like a key for that key", async () => {
+    const root = kitFixture("proj-shorthand-value", {
+      "svelte.config.js":
+        "const routes = 'unused';\n" +
+        "export default { kit: { files: { assets: routes, lib: 'src/shared' } } };\n",
+      "src/routes/+page.svelte": "",
+      "src/shared/Button.svelte": "",
+    });
+    const found = await discover(root);
+    assert.equal(found.project?.routesDir, join(root, "src", "routes"));
+    assert.equal(found.project?.libDir, join(root, "src", "shared"));
+    assert.equal(found.project?.configUnresolved, undefined);
+  });
+
   it("returns every project in a monorepo as candidates rather than guessing", async () => {
     const root = fixture("mono", {
       "package.json": JSON.stringify({ name: "mono", private: true }),

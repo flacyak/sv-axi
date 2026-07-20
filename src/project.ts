@@ -128,6 +128,24 @@ interface KitFiles {
 
 const FILE_KEYS = ["routes", "lib"] as const;
 
+/**
+ * Is `key` present in the block at all — as `routes: …` or as the shorthand
+ * `{ routes }`?
+ *
+ * The shorthand carries a path just as much as the long form does, so missing
+ * it is worse than not parsing the block: the key looks absent, the default
+ * path stands unchallenged, and `unresolved` never gets set — so a wrong
+ * directory is reported as fact. The shorthand arm requires the name to open
+ * the block or follow a comma, which keeps it from firing on a *value* of the
+ * same name (`assets: routes`).
+ */
+function declares(block: string, key: string): boolean {
+  return (
+    new RegExp(`\\b${key}\\s*:`).test(block) ||
+    new RegExp(`(?:^|[{,])\\s*${key}\\s*(?=[,}]|$)`).test(block)
+  );
+}
+
 /** Evaluate the config to reach paths that text alone can't resolve. */
 async function importedFiles(configFile: string): Promise<KitFiles> {
   try {
@@ -168,7 +186,7 @@ async function configuredFiles(configFile: string): Promise<KitFiles> {
   const literal: KitFiles = {};
   const unresolved: Array<(typeof FILE_KEYS)[number]> = [];
   for (const key of FILE_KEYS) {
-    if (!new RegExp(`\\b${key}\\s*:`).test(block)) continue;
+    if (!declares(block, key)) continue;
     const value = literalPath(block, key);
     if (value) literal[key] = value;
     else unresolved.push(key);
